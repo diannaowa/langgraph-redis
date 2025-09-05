@@ -52,8 +52,11 @@ REDIS_KEY_SEPARATOR = ":"
 DEFAULT_STORE_PREFIX = "store"
 DEFAULT_STORE_VECTOR_PREFIX = "store_vectors"
 
-def create_store_schemas(store_prefix: str = DEFAULT_STORE_PREFIX, 
-                        store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX) -> list[dict[str, Any]]:
+
+def create_store_schemas(
+    store_prefix: str = DEFAULT_STORE_PREFIX,
+    store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX,
+) -> list[dict[str, Any]]:
     """Create Redis Search schemas with configurable prefixes."""
     return [
         {
@@ -89,6 +92,7 @@ def create_store_schemas(store_prefix: str = DEFAULT_STORE_PREFIX,
             ],
         },
     ]
+
 
 # Default schemas for backward compatibility
 SCHEMAS = create_store_schemas()
@@ -219,7 +223,7 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
         self._redis = conn
         # Store cluster_mode; None means auto-detect in RedisStore or AsyncRedisStore
         self.cluster_mode = cluster_mode
-        
+
         # Store configurable prefixes
         self.store_prefix = store_prefix
         self.store_vector_prefix = store_vector_prefix
@@ -238,9 +242,7 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
 
         # Initialize search indices with configurable prefixes
         schemas = create_store_schemas(self.store_prefix, self.store_vector_prefix)
-        self.store_index = SearchIndex.from_dict(
-            schemas[0], redis_client=self._redis
-        )
+        self.store_index = SearchIndex.from_dict(schemas[0], redis_client=self._redis)
 
         # Configure vector index if needed
         if self.index_config:

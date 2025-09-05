@@ -30,9 +30,9 @@ from redisvl.utils.token_escaper import TokenEscaper
 from ulid import ULID
 
 from langgraph.store.redis.base import (
-    REDIS_KEY_SEPARATOR,
     DEFAULT_STORE_PREFIX,
     DEFAULT_STORE_VECTOR_PREFIX,
+    REDIS_KEY_SEPARATOR,
     BaseRedisStore,
     RedisDocument,
     _decode_ns,
@@ -126,6 +126,7 @@ class AsyncRedisStore(
 
         # Create store index with configurable prefixes
         from langgraph.store.redis.base import create_store_schemas
+
         schemas = create_store_schemas(self.store_prefix, self.store_vector_prefix)
         self.store_index = AsyncSearchIndex.from_dict(
             schemas[0], redis_client=self._redis
@@ -314,8 +315,13 @@ class AsyncRedisStore(
         store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX,
     ) -> AsyncIterator[AsyncRedisStore]:
         """Create store from Redis connection string."""
-        async with cls(redis_url=conn_string, index=index, ttl=ttl, 
-                       store_prefix=store_prefix, store_vector_prefix=store_vector_prefix) as store:
+        async with cls(
+            redis_url=conn_string,
+            index=index,
+            ttl=ttl,
+            store_prefix=store_prefix,
+            store_vector_prefix=store_vector_prefix,
+        ) as store:
             await store.setup()
             # Set client information after setup
             await store.aset_client_info()

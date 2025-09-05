@@ -32,9 +32,9 @@ from ulid import ULID
 
 from langgraph.store.redis.aio import AsyncRedisStore
 from langgraph.store.redis.base import (
-    REDIS_KEY_SEPARATOR,
     DEFAULT_STORE_PREFIX,
     DEFAULT_STORE_VECTOR_PREFIX,
+    REDIS_KEY_SEPARATOR,
     BaseRedisStore,
     RedisDocument,
     _decode_ns,
@@ -91,8 +91,13 @@ class RedisStore(BaseStore, BaseRedisStore[Redis, SearchIndex]):
     ) -> None:
         BaseStore.__init__(self)
         BaseRedisStore.__init__(
-            self, conn, index=index, ttl=ttl, cluster_mode=cluster_mode,
-            store_prefix=store_prefix, store_vector_prefix=store_vector_prefix
+            self,
+            conn,
+            index=index,
+            ttl=ttl,
+            cluster_mode=cluster_mode,
+            store_prefix=store_prefix,
+            store_vector_prefix=store_vector_prefix,
         )
         # Detection will happen in setup()
 
@@ -111,8 +116,13 @@ class RedisStore(BaseStore, BaseRedisStore[Redis, SearchIndex]):
         client = None
         try:
             client = RedisConnectionFactory.get_redis_connection(conn_string)
-            store = cls(client, index=index, ttl=ttl, 
-                       store_prefix=store_prefix, store_vector_prefix=store_vector_prefix)
+            store = cls(
+                client,
+                index=index,
+                ttl=ttl,
+                store_prefix=store_prefix,
+                store_vector_prefix=store_vector_prefix,
+            )
             # Client info will already be set in __init__, but we set it up here
             # to make the method behavior consistent with AsyncRedisStore
             store.set_client_info()
