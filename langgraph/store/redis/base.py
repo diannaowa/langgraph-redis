@@ -49,44 +49,49 @@ _token_unescaper = TokenUnescaper()
 logger = logging.getLogger(__name__)
 
 REDIS_KEY_SEPARATOR = ":"
-STORE_PREFIX = "store"
-STORE_VECTOR_PREFIX = "store_vectors"
+DEFAULT_STORE_PREFIX = "store"
+DEFAULT_STORE_VECTOR_PREFIX = "store_vectors"
 
-# Schemas for Redis Search indices
-SCHEMAS = [
-    {
-        "index": {
-            "name": "store",
-            "prefix": STORE_PREFIX + REDIS_KEY_SEPARATOR,
-            "storage_type": "json",
+def create_store_schemas(store_prefix: str = DEFAULT_STORE_PREFIX, 
+                        store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX) -> list[dict[str, Any]]:
+    """Create Redis Search schemas with configurable prefixes."""
+    return [
+        {
+            "index": {
+                "name": f"{store_prefix}_index",
+                "prefix": store_prefix + REDIS_KEY_SEPARATOR,
+                "storage_type": "json",
+            },
+            "fields": [
+                {"name": "prefix", "type": "text"},
+                {"name": "key", "type": "tag"},
+                {"name": "created_at", "type": "numeric"},
+                {"name": "updated_at", "type": "numeric"},
+                {"name": "ttl_minutes", "type": "numeric"},
+                {"name": "expires_at", "type": "numeric"},
+            ],
         },
-        "fields": [
-            {"name": "prefix", "type": "text"},
-            {"name": "key", "type": "tag"},
-            {"name": "created_at", "type": "numeric"},
-            {"name": "updated_at", "type": "numeric"},
-            {"name": "ttl_minutes", "type": "numeric"},
-            {"name": "expires_at", "type": "numeric"},
-        ],
-    },
-    {
-        "index": {
-            "name": "store_vectors",
-            "prefix": STORE_VECTOR_PREFIX + REDIS_KEY_SEPARATOR,
-            "storage_type": "json",
+        {
+            "index": {
+                "name": f"{store_vector_prefix}_index",
+                "prefix": store_vector_prefix + REDIS_KEY_SEPARATOR,
+                "storage_type": "json",
+            },
+            "fields": [
+                {"name": "prefix", "type": "text"},
+                {"name": "key", "type": "tag"},
+                {"name": "field_name", "type": "tag"},
+                {"name": "embedding", "type": "vector"},
+                {"name": "created_at", "type": "numeric"},
+                {"name": "updated_at", "type": "numeric"},
+                {"name": "ttl_minutes", "type": "numeric"},
+                {"name": "expires_at", "type": "numeric"},
+            ],
         },
-        "fields": [
-            {"name": "prefix", "type": "text"},
-            {"name": "key", "type": "tag"},
-            {"name": "field_name", "type": "tag"},
-            {"name": "embedding", "type": "vector"},
-            {"name": "created_at", "type": "numeric"},
-            {"name": "updated_at", "type": "numeric"},
-            {"name": "ttl_minutes", "type": "numeric"},
-            {"name": "expires_at", "type": "numeric"},
-        ],
-    },
-]
+    ]
+
+# Default schemas for backward compatibility
+SCHEMAS = create_store_schemas()
 
 
 def _ensure_string_or_literal(value: Any) -> str:
@@ -205,6 +210,8 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
         index: Optional[IndexConfig] = None,
         ttl: Optional[TTLConfig] = None,  # Corrected type hint for ttl
         cluster_mode: Optional[bool] = None,
+        store_prefix: str = DEFAULT_STORE_PREFIX,
+        store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX,
     ) -> None:
         """Initialize store with Redis connection and optional index config."""
         self.index_config = index
@@ -212,6 +219,10 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
         self._redis = conn
         # Store cluster_mode; None means auto-detect in RedisStore or AsyncRedisStore
         self.cluster_mode = cluster_mode
+        
+        # Store configurable prefixes
+        self.store_prefix = store_prefix
+        self.store_vector_prefix = store_vector_prefix
 
         if self.index_config:
             self.index_config = self.index_config.copy()
@@ -225,9 +236,10 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
                 (p, tokenize_path(p)) if p != "$" else (p, p) for p in fields
             ]
 
-        # Initialize search indices
+        # Initialize search indices with configurable prefixes
+        schemas = create_store_schemas(self.store_prefix, self.store_vector_prefix)
         self.store_index = SearchIndex.from_dict(
-            self.SCHEMAS[0], redis_client=self._redis
+            schemas[0], redis_client=self._redis
         )
 
         # Configure vector index if needed
@@ -237,7 +249,7 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
             index_dict = dict(self.index_config)
             vector_storage_type = index_dict.get("vector_storage_type", "json")
 
-            vector_schema: Dict[str, Any] = copy.deepcopy(self.SCHEMAS[1])
+            vector_schema: Dict[str, Any] = copy.deepcopy(schemas[1])
             # Update storage type in schema
             vector_schema["index"]["storage_type"] = vector_storage_type
 
@@ -276,6 +288,14 @@ class BaseRedisStore(Generic[RedisClientType, IndexType]):
 
         # Set client information in Redis
         self.set_client_info()
+
+    def _get_store_key(self, doc_id: str) -> str:
+        """Generate store key with configurable prefix."""
+        return f"{self.store_prefix}{REDIS_KEY_SEPARATOR}{doc_id}"
+
+    def _get_vector_key(self, doc_id: str) -> str:
+        """Generate vector key with configurable prefix."""
+        return f"{self.store_vector_prefix}{REDIS_KEY_SEPARATOR}{doc_id}"
 
     def set_client_info(self) -> None:
         """Set client info for Redis monitoring."""

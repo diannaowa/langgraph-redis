@@ -31,8 +31,8 @@ from ulid import ULID
 
 from langgraph.store.redis.base import (
     REDIS_KEY_SEPARATOR,
-    STORE_PREFIX,
-    STORE_VECTOR_PREFIX,
+    DEFAULT_STORE_PREFIX,
+    DEFAULT_STORE_VECTOR_PREFIX,
     BaseRedisStore,
     RedisDocument,
     _decode_ns,
@@ -76,6 +76,8 @@ class AsyncRedisStore(
         connection_args: Optional[dict[str, Any]] = None,
         ttl: Optional[dict[str, Any]] = None,
         cluster_mode: Optional[bool] = None,
+        store_prefix: str = DEFAULT_STORE_PREFIX,
+        store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX,
     ) -> None:
         """Initialize store with Redis connection and optional index config."""
         if redis_url is None and redis_client is None:
@@ -118,14 +120,20 @@ class AsyncRedisStore(
             raise TypeError("cluster_mode must be a boolean or None")
         self.cluster_mode: Optional[bool] = cluster_mode
 
-        # Create store index
+        # Store configurable prefixes
+        self.store_prefix = store_prefix
+        self.store_vector_prefix = store_vector_prefix
+
+        # Create store index with configurable prefixes
+        from langgraph.store.redis.base import create_store_schemas
+        schemas = create_store_schemas(self.store_prefix, self.store_vector_prefix)
         self.store_index = AsyncSearchIndex.from_dict(
-            self.SCHEMAS[0], redis_client=self._redis
+            schemas[0], redis_client=self._redis
         )
 
         # Configure vector index if needed
         if self.index_config:
-            vector_schema = self.SCHEMAS[1].copy()
+            vector_schema = schemas[1].copy()
             vector_fields = vector_schema.get("fields", [])
             vector_field = None
             for f in vector_fields:
@@ -302,9 +310,12 @@ class AsyncRedisStore(
         *,
         index: Optional[IndexConfig] = None,
         ttl: Optional[dict[str, Any]] = None,
+        store_prefix: str = DEFAULT_STORE_PREFIX,
+        store_vector_prefix: str = DEFAULT_STORE_VECTOR_PREFIX,
     ) -> AsyncIterator[AsyncRedisStore]:
         """Create store from Redis connection string."""
-        async with cls(redis_url=conn_string, index=index, ttl=ttl) as store:
+        async with cls(redis_url=conn_string, index=index, ttl=ttl, 
+                       store_prefix=store_prefix, store_vector_prefix=store_vector_prefix) as store:
             await store.setup()
             # Set client information after setup
             await store.aset_client_info()
@@ -326,6 +337,14 @@ class AsyncRedisStore(
         # but we'll set it again here to be consistent with checkpoint code
         await self.aset_client_info()
         return self
+
+    def _get_store_key(self, doc_id: str) -> str:
+        """Generate store key with configurable prefix."""
+        return f"{self.store_prefix}{REDIS_KEY_SEPARATOR}{doc_id}"
+
+    def _get_vector_key(self, doc_id: str) -> str:
+        """Generate vector key with configurable prefix."""
+        return f"{self.store_vector_prefix}{REDIS_KEY_SEPARATOR}{doc_id}"
 
     async def __aexit__(
         self,
@@ -459,9 +478,7 @@ class AsyncRedisStore(
 
                             # Also add vector keys for the same document
                             doc_uuid = doc_id.split(":")[-1]
-                            vector_key = (
-                                f"{STORE_VECTOR_PREFIX}{REDIS_KEY_SEPARATOR}{doc_uuid}"
-                            )
+                            vector_key = self._get_vector_key(doc_uuid)
                             refresh_keys_by_idx[idx].append(vector_key)
 
         # Now refresh TTLs for any keys that need it
@@ -624,7 +641,7 @@ class AsyncRedisStore(
                 doc_ids[(namespace, op.key)] = generated_doc_id
                 # Track TTL for this document if specified
                 if hasattr(op, "ttl") and op.ttl is not None:
-                    main_key = f"{STORE_PREFIX}{REDIS_KEY_SEPARATOR}{generated_doc_id}"
+                    main_key = self._get_store_key(generated_doc_id)
                     ttl_tracking[main_key] = ([], op.ttl)
 
         # Load store docs with explicit keys
@@ -638,7 +655,7 @@ class AsyncRedisStore(
                 doc.pop("expires_at", None)
 
             store_docs.append(doc)
-            redis_key = f"{STORE_PREFIX}{REDIS_KEY_SEPARATOR}{doc_id}"
+            redis_key = self._get_store_key(doc_id)
             store_keys.append(redis_key)
 
         if store_docs:
@@ -674,11 +691,11 @@ class AsyncRedisStore(
                         "updated_at": datetime.now(timezone.utc).timestamp(),
                     }
                 )
-                redis_vector_key = f"{STORE_VECTOR_PREFIX}{REDIS_KEY_SEPARATOR}{doc_id}"
+                redis_vector_key = self._get_vector_key(doc_id)
                 vector_keys.append(redis_vector_key)
 
                 # Add this vector key to the related keys list for TTL
-                main_key = f"{STORE_PREFIX}{REDIS_KEY_SEPARATOR}{doc_id}"
+                main_key = self._get_store_key(doc_id)
                 if main_key in ttl_tracking:
                     ttl_tracking[main_key][0].append(redis_vector_key)
 
@@ -740,7 +757,7 @@ class AsyncRedisStore(
                         )
                         if doc_id:
                             doc_uuid = doc_id.split(":")[1]
-                            store_key = f"{STORE_PREFIX}{REDIS_KEY_SEPARATOR}{doc_uuid}"
+                            store_key = self._get_store_key(doc_uuid)
                             result_map[store_key] = doc
                             # Fetch individually in cluster mode
                             store_doc_item = await self._redis.json().get(store_key)  # type: ignore
@@ -760,7 +777,7 @@ class AsyncRedisStore(
                         )
                         if doc_id:
                             doc_uuid = doc_id.split(":")[1]
-                            store_key = f"{STORE_PREFIX}{REDIS_KEY_SEPARATOR}{doc_uuid}"
+                            store_key = self._get_store_key(doc_uuid)
                             result_map[store_key] = doc
                             pipeline.json().get(store_key)
                     store_docs_raw = await pipeline.execute()
@@ -824,9 +841,7 @@ class AsyncRedisStore(
                             refresh_keys.append(store_key)
                             # Also find associated vector keys with same ID
                             doc_id = store_key.split(":")[-1]
-                            vector_key = (
-                                f"{STORE_VECTOR_PREFIX}{REDIS_KEY_SEPARATOR}{doc_id}"
-                            )
+                            vector_key = self._get_vector_key(doc_id)
                             refresh_keys.append(vector_key)
 
                         items.append(
@@ -896,9 +911,7 @@ class AsyncRedisStore(
                         refresh_keys.append(doc.id)
                         # Also find associated vector keys with same ID
                         doc_id = doc.id.split(":")[-1]
-                        vector_key = (
-                            f"{STORE_VECTOR_PREFIX}{REDIS_KEY_SEPARATOR}{doc_id}"
-                        )
+                        vector_key = self._get_vector_key(doc_id)
                         refresh_keys.append(vector_key)
 
                     items.append(_row_to_search_item(_decode_ns(data["prefix"]), data))
