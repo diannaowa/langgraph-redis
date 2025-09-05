@@ -13,10 +13,12 @@ from ulid import ULID
 
 from langgraph.checkpoint.redis import RedisSaver
 from langgraph.store.redis import RedisStore
+from langgraph.store.redis.base import DEFAULT_STORE_PREFIX as STORE_PREFIX
+from langgraph.store.redis.base import (
+    DEFAULT_STORE_VECTOR_PREFIX as STORE_VECTOR_PREFIX,
+)
 from langgraph.store.redis.base import (
     REDIS_KEY_SEPARATOR,
-    STORE_PREFIX,
-    STORE_VECTOR_PREFIX,
 )
 
 
